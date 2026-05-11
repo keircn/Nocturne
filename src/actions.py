@@ -248,12 +248,7 @@ def delete_navidrome_server(window):
     dialog.choose(window, None, response)
 
 def open_popout_window(window, fullscreened:bool=False):
-    if not window.get_application().popout_window:
-        window.get_application().popout_window = Widgets.PopoutWindow(
-            application=window.get_application(),
-            fullscreened=fullscreened
-        )
-    GLib.idle_add(window.get_application().popout_window.present)
+    GLib.idle_add(window.get_application().show_miniplayer, fullscreened)
 
 def toggle_fullscreen(window):
     integration = get_current_integration()
@@ -266,7 +261,7 @@ def toggle_fullscreen(window):
                 popout_window.fullscreen()
         else:
             window.get_application().lookup_action("toggle_fullscreen").set_enabled(False)
-            open_popout_window(window, True)
+            window.get_application().show_miniplayer(True)
             GLib.timeout_add(1000, window.get_application().lookup_action("toggle_fullscreen").set_enabled, True)
 
 # -- PLAYER --
@@ -1041,4 +1036,3 @@ def delete_downloads(window, model_list:list):
             _("Deleted")
         )
     threading.Thread(target=run).start()
-
