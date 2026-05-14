@@ -216,7 +216,6 @@ class DiscordRPC:
             return not (ip.is_private or ip.is_loopback or ip.is_link_local)
         except ValueError:
             return True
-
     def _send(self, op, payload):
         try:
             data = json.dumps(payload).encode("utf-8")

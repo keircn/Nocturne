@@ -133,7 +133,6 @@ class NocturnePreferences(Adw.PreferencesDialog):
             "text",
             Gio.SettingsBindFlags.DEFAULT
         )
-
         self.listenbrainz_stack_el.set_visible_child_name("unlink" if secret.get_plain_password(schema_type="listenbrainz") else "link")
         if integration:
             data = integration.getServerInformation()
