@@ -20,10 +20,9 @@
 from gi.repository import Gtk, Adw, GLib, Gst, Gio, GObject, Pango
 
 from . import actions
-from .integrations import get_current_integration, models
+from .integrations import get_current_integration
 from .constants import SIDEBAR_MENU
 import threading
-from datetime import datetime, timedelta
 
 class SidebarItem(Adw.SidebarItem):
     __gtype_name__ = 'NocturneSidebarItem'
@@ -60,19 +59,7 @@ class NocturneWindow(Adw.ApplicationWindow):
             if integration := get_current_integration():
                 id_list = [so.get_string() for so in integration.loaded_models.get('currentSong').get_property('queueModel')]
                 current_song = integration.loaded_models.get('currentSong')
-
-                queue_origin = current_song.get_property('queueOrigin')
-                song_id = current_song.get_property('songId')
-                timestamp = current_song.get_property('positionSeconds')
-                if model := integration.loaded_models.get(queue_origin):
-                    if isinstance(model, models.Playlist):
-                        integration.savePlaylistResume(
-                            queue_origin_id=queue_origin,
-                            song_id=song_id,
-                            current_timestamp=timestamp
-                        )
-
-                integration.savePlayQueue(id_list, song_id, timestamp * 1000)
+                integration.savePlayQueue(id_list, current_song.get_property('songId'), current_song.get_property('positionSeconds') * 1000)
                 integration.terminate_instance()
             settings = Gio.Settings(schema_id="com.jeffser.Nocturne")
             settings.set_int('default-width', self.get_width())
@@ -90,7 +77,8 @@ class NocturneWindow(Adw.ApplicationWindow):
             self.replace_root_page(page_tag)
 
     def replace_root_page(self, page_tag:str):
-        if page := self.main_navigationview.find_page(page_tag):
+        page = self.main_navigationview.find_page(page_tag)
+        if page:
             self.main_bottom_sheet.set_open(False)
             self.main_split_view.set_show_content(True)
             threading.Thread(target=page.reload, daemon=True).start()
@@ -182,7 +170,6 @@ class NocturneWindow(Adw.ApplicationWindow):
         self.sidebar_lyrics_page.setup()
         self.sidebar_queue_page.setup()
         self.downloads_button_el.setup()
-        self.notify_playback()
         integration = get_current_integration()
         integration.connect_to_model('currentSong', 'songId', self.song_changed)
 
@@ -197,35 +184,9 @@ class NocturneWindow(Adw.ApplicationWindow):
                     popout_window.close()
         self.big_breakpoint_toggled()
 
-    def notify_playback(self):
-        # Notifies user if Nocturne Playback is ready for this month
-        prev_month = datetime.now().replace(day=1) - timedelta(days=1)
-        if prev_month.strftime("%m-%Y") != self.settings.get_value('last-playback-checked').unpack():
-            integration = get_current_integration()
-            top_songs = []
-            for songId, plays in integration.getPlaybackScrobble(prev_month.strftime("%m-%Y")):
-                integration.verifySong(songId, use_threading=False)
-                if songId in integration.loaded_models:
-                    top_songs.append((songId, plays))
-            if len(top_songs) > 5:
-                def response(dialog, task):
-                    if dialog.choose_finish(task) == "show":
-                        self.get_root().activate_action("app.launch_playback")
-                dialog = Adw.AlertDialog(
-                    heading=_("Nocturne Playback"),
-                    body=_("Your Playback queue for {} is available!").format(prev_month.strftime("%B %Y"))
-                )
-                dialog.add_response("show", _("Show"))
-                dialog.add_response("later", _("Later"))
-                dialog.set_response_appearance("show", Adw.ResponseAppearance.SUGGESTED)
-                dialog.set_default_response("show")
-                dialog.choose(self, None, response)
-            self.settings.set_string('last-playback-checked', prev_month.strftime("%m-%Y"))
-
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
-        self.create_action(actions.launch_playback, parameter_type=None)
         self.create_action(actions.generate_auto_play_queue, parameter_type="b")
         self.create_action(actions.set_equalizer_preset)
         self.create_action(actions.replace_root_page)
@@ -364,5 +325,4 @@ class NocturneWindow(Adw.ApplicationWindow):
                 GLib.idle_add(self.main_bottom_sheet.set_open, False)
         if not song_playing:
             GLib.idle_add(self.main_bottom_sheet.set_open, False)
-
 

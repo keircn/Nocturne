@@ -2,7 +2,7 @@
 
 from gi.repository import Gtk, Adw, GLib, GObject, Gio
 from ...integrations import get_current_integration
-from ..song import SongRow, SongButton
+from ..song import SongSmallRow, SongRow
 import threading, re
 
 @Gtk.Template(resource_path='/com/jeffser/Nocturne/pages/songs_starred.ui')
@@ -20,7 +20,7 @@ class SongsStarredPage(Adw.NavigationPage):
         GLib.idle_add(self.reset)
         for id in songs:
             GLib.idle_add(self.list_el.list_el.append, SongRow(id))
-            GLib.idle_add(self.wrapbox_el.append, SongButton(id))
+            GLib.idle_add(self.wrapbox_el.append, SongSmallRow(id))
         GLib.idle_add(self.update_visibility)
 
     def reset(self):

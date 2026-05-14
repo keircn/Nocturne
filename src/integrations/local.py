@@ -1,7 +1,7 @@
 # local.py
 
 from gi.repository import Gtk, GLib, GObject, Gdk, Gio, GdkPixbuf
-from . import secret, models, sql_instance
+from . import secret, models
 from .base import Base
 from datetime import datetime, timezone
 import requests, random, threading, io, pathlib, re, json, os, time, uuid, pwd, getpass, time, shutil
@@ -26,35 +26,6 @@ class Local(Base):
     }
     limitations = ('no-max-bitrate',)
 
-    sqlSchema = {
-        'stars': {
-            'id': 'TEXT PRIMARY KEY'
-        },
-        'radios': {
-            'id': 'TEXT PRIMARY KEY',
-            'name': 'TEXT NOT NULL',
-            'stream_url': 'TEXT NOT NULL'
-        },
-        'ratings': {
-            'id': 'TEXT PRIMARY KEY',
-            'rating': 'INTEGER DEFAULT 1'
-        },
-        'scrobble': {
-            'id': 'TEXT PRIMARY KEY',
-            'plays': 'INTEGER DEFAULT 1',
-            'last_play': 'INTEGER DEFAULT 0',
-            'album_id': 'TEXT NOT NULL',
-            'artist_id': 'TEXT NOT NULL'
-        }
-    }
-
-    def get_rating(self, model_id) -> int:
-        conn, cursor = sql_instance.get_connection(self)
-        cursor.execute("SELECT rating FROM ratings WHERE id = ?", (model_id,))
-        result = cursor.fetchone()
-        conn.close()
-        return result[0] if result else 0
-
     def on_login(self):
         # Goes through the whole directory retrieving all the metadata
         audio_data_list = []
@@ -71,12 +42,7 @@ class Local(Base):
                     continue
                 if file_path.suffix.lower() in ('.mp3', '.flac', '.m4a', '.oga', '.ogg', '.opus', '.wav'):
                     song_id = 'SONG:{}'.format(file_path)
-                    self.loaded_models[song_id] = models.Song(
-                        id=song_id,
-                        path=file_path,
-                        coverArt=file_path,
-                        userRating=self.get_rating(song_id)
-                    )
+                    self.loaded_models[song_id] = models.Song(id=song_id, path=file_path, coverArt=file_path)
                     threads.append(threading.Thread(target=self.verifySong, args=(song_id,), daemon=True))
                     threads[-1].start()
             for t in threads:
@@ -85,17 +51,17 @@ class Local(Base):
         threading.Thread(target=load_songs, daemon=True).start()
 
         # Load radios
-        conn, cursor = sql_instance.get_connection(self)
-        cursor.execute("SELECT id, name, stream_url FROM radios")
-        for radio in cursor.fetchall():
-            self.loaded_models[radio[0]] = models.Song(
-                id=radio[0],
-                title=radio[1],
-                streamUrl=radio[2],
+        radio_dict = self.open_json('radios.json')
+
+        for radio_id, radio in radio_dict.items():
+            self.loaded_models[radio_id] = models.Song(
+                id=radio_id,
+                title=radio.get('name'),
+                streamUrl=radio.get('streamUrl'),
                 duration=-1,
                 isRadio=True
             )
-        conn.close()
+
         self.load_playlists()
 
     def load_playlists(self):
@@ -161,6 +127,10 @@ class Local(Base):
                 pass
         return None
 
+    def ping(self) -> bool:
+        # Always true, it checks it at login
+        return True
+
     def getAlbumList(self, list_type:str="recent", size:int=10, offset:int=0) -> list:
         album_list = []
         if list_type == "random":
@@ -172,23 +142,18 @@ class Local(Base):
                 albums[model.get_property('id')] = pathlib.Path(model.get_property('coverArt')).stat().st_ctime
             album_list = sorted(albums, key=lambda x: albums.get(x), reverse=True)
         elif list_type in ("frequent", "recent"):
+            scrobble_dict = self.open_json('scrobble.json')
             album_views = {}
-            conn, cursor = sql_instance.get_connection(self)
-            cursor.execute("SELECT album_id, plays, last_play FROM scrobble")
-            for row in cursor.fetchall():
-                album_id = row[0]
-                plays = row[1]
-                last_play = row[2]
-
-                if album_id in album_views:
-                    album_views[album_id]['plays'] += plays
-                    album_views[album_id]['last_play'] = max(album_views.get(album_id).get('last_play'), last_play)
+            for data in scrobble_dict.values():
+                if data.get('album') in album_views:
+                    album_views[data.get('album')]['plays'] += data.get('plays')
+                    album_views[data.get('album')]['last_play'] = max(data.get('last_play'), album_views.get(data.get('album')).get('last_play'))
                 else:
-                    album_views[album_id] = {
-                        'plays': plays,
-                        'last_play': last_play
+                    album_views[data.get('album')] = {
+                        'plays': data.get('plays'),
+                        'last_play': data.get('last_play')
                     }
-            conn.close()
+
             if list_type == "frequent":
                 album_list = sorted(album_views, key=lambda x: album_views.get(x).get('plays'), reverse=True)
             elif list_type == "recent":
@@ -207,11 +172,8 @@ class Local(Base):
         return [model_id for model_id in list(self.loaded_models) if model_id.startswith('PLAYLIST:')]
 
     def getStarredSongs(self) -> list:
-        conn, cursor = sql_instance.get_connection(self)
-        cursor.execute("SELECT id FROM stars")
-        star_list = [str(r[0]) for r in cursor.fetchall()]
-        conn.close()
-        return [song_id for song_id in star_list if song_id.startswith("SONG:") and song_id in self.loaded_models]
+        star_dict = self.open_json('stars.json')
+        return [song_id for song_id in star_dict if song_id.startswith("SONG:") and song_id in self.loaded_models]
 
     def verifyArtist(self, model_id:str, force_update:bool=False, use_threading:bool=True):
         threading.Thread(target=self.getCoverArt, args=(model_id,), daemon=True).start()
@@ -224,17 +186,15 @@ class Local(Base):
 
     def verifySong(self, model_id:str, force_update:bool=False, use_threading:bool=True):
         def run():
-            conn, cursor = sql_instance.get_connection(self)
-            cursor.execute("SELECT id FROM stars")
-            star_list = [str(r[0]) for r in cursor.fetchall()]
-            conn.close()
+            # load star_dict
+            star_dict = self.open_json('stars.json')
 
             # Updating Song Model
-            song = get_song_info_from_file(self.loaded_models.get(model_id).get_property("path"), star_list=star_list)
+            song = get_song_info_from_file(self.loaded_models.get(model_id).get_property("path"), star_dict=star_dict)
             if not song:
                 return
             song["id"] = model_id
-            song["starred"] = song.get("id") in star_list
+            song["starred"] = song.get("id") in star_dict
             self.loaded_models.get(model_id).update_data(**song)
 
             # Making Album Model
@@ -254,8 +214,7 @@ class Local(Base):
                         'artist': song.get('artist'),
                         'artistId': song.get('artistId'),
                         'song': [{'id': model_id}],
-                        'starred': album_id in star_list,
-                        'userRating': self.get_rating(album_id)
+                        'starred': album_id in star_dict
                     }
                     self.loaded_models[album.get('id')] = models.Album(**album)
 
@@ -268,8 +227,7 @@ class Local(Base):
                         name=artist_name,
                         album=[],
                         albumCount=0,
-                        starred=artist_id in star_list,
-                        userRating=self.get_rating(artist_id)
+                        starred=artist_id in star_dict
                     )
 
                 album_list = self.loaded_models.get(artist_id).album
@@ -295,17 +253,21 @@ class Local(Base):
         threading.Thread(target=self.getCoverArt, args=(model_id,), daemon=True).start()
 
     def star(self, model_id:str) -> bool:
-        conn, cursor = sql_instance.get_connection(self)
-        cursor.execute("INSERT OR IGNORE INTO stars (id) VALUES (?)", (model_id,))
-        conn.commit()
-        conn.close()
+        star_dict = self.open_json('stars.json')
+
+        current_time = datetime.now(timezone.utc).isoformat(timespec='microseconds').replace("+00:00", "Z")
+        star_dict[model_id] = current_time
+
+        self.save_json('stars.json', star_dict)
         return True
 
     def unstar(self, model_id:str) -> bool:
-        conn, cursor = sql_instance.get_connection(self)
-        cursor.execute("DELETE FROM stars WHERE id=?", (model_id,))
-        conn.commit()
-        conn.close()
+        star_dict = self.open_json('stars.json')
+
+        if model_id in star_dict:
+            del star_dict[model_id]
+
+        self.save_json('stars.json', star_dict)
         return True
 
     def getPlayQueue(self) -> tuple:
@@ -376,28 +338,44 @@ class Local(Base):
         return [model_id for model_id in list(self.loaded_models) if model_id.startswith('RADIO:')]
 
     def createInternetRadioStation(self, name:str, streamUrl:str) -> bool:
-        radio_id = 'RADIO:{}'.format(str(uuid.uuid4()))
-        return self.updateInternetRadioStation(radio_id, name, streamUrl)
+        radio_dict = self.open_json('radios.json')
+
+        radio_id = str(uuid.uuid4())
+        radio_dict[radio_id] = {
+            'name': name,
+            'streamUrl': streamUrl
+        }
+
+        self.loaded_models[radio_id] = models.Song(
+            id=radio_id,
+            title=name,
+            streamUrl=streamUrl,
+            duration=-1,
+            isRadio=True
+        )
+
+        self.save_json('radios.json', radio_dict)
+        return True
 
     def updateInternetRadioStation(self, model_id:str, name:str, streamUrl:str) -> bool:
-        conn, cursor = sql_instance.get_connection(self)
-        query = """
-        INSERT INTO radios (id, name, stream_url)
-        VALUES (?, ?, ?)
-        ON CONFLICT (id) DO UPDATE SET
-            name = excluded.name,
-            stream_url = excluded.stream_url
-        """
-        cursor.execute(query, (model_id, name, streamUrl))
-        conn.commit()
-        conn.close()
+        radio_dict = self.open_json('radios.json')
+
+        radio_dict[model_id] = {
+            'name': name,
+            'streamUrl': streamUrl
+        }
+        if model := self.loaded_models.get(model_id):
+            model.set_property('title', name)
+            model.set_property('streamUrl', streamUrl)
+
+        self.save_json('radios.json', radio_dict)
         return True
 
     def deleteInternetRadioStation(self, model_id:str) -> bool:
-        conn, cursor = sql_instance.get_connection(self)
-        cursor.execute("DELETE FROM radios WHERE id = ?", (model_id,))
-        conn.commit()
-        conn.close()
+        radio_dict = self.open_json('radios.json')
+        if model_id in radio_dict:
+            del radio_dict[model_id]
+        self.save_json('radios.json', radio_dict)
         return True
 
     def createPlaylist(self, name:str=None, playlistId:str=None, songId:list=[]) -> str:
@@ -457,18 +435,14 @@ class Local(Base):
 
     def getTopSongs(self, artist_id:str, count:int=10) -> list:
         artist_scrobbles = {}
-        conn, cursor = sql_instance.get_connection(self)
-        cursor.execute("SELECT id, plays, artist_id FROM scrobble")
-        for song in cursor.fetchall():
-            song_id = song[0]
-            plays = song[1]
-            artist = song[2]
-            if not artist:
+        for song_id, data in self.open_json('scrobble.json').items():
+            found_artist = data.get('artist')
+            if not found_artist:
                 if model := self.loaded_models.get(song_id):
-                    artist = model.get_property('artistId')
-            if artist == artist_id:
-                artist_scrobbles[song_id] = plays
-        conn.close()
+                    found_artist = model.get_property('artistId')
+
+            if found_artist == artist_id:
+                artist_scrobbles[song_id] = data.get('plays', 1)
         return sorted(artist_scrobbles, key=artist_scrobbles.get, reverse=True)[:count]
 
     def downloadSong(self, model_id:str, file_title:str, progress_callback:callable):
@@ -486,35 +460,28 @@ class Local(Base):
                 return
             
             if submission:
-                conn, cursor = sql_instance.get_connection(self)
-                query = """
-                INSERT INTO scrobble (id, plays, last_play, album_id, artist_id)
-                VALUES (?, 1, ?, ?, ?)
-                ON CONFLICT (id) DO UPDATE SET
-                    plays = plays + 1,
-                    last_play = excluded.last_play,
-                    album_id = excluded.album_id,
-                    artist_id = excluded.artist_id
-                """
-                cursor.execute(query, (model_id, int(time.time()), model.get_property('albumId'), model.get_property('artistId')))
-                conn.commit()
-                conn.close()
+                scrobble_dict = self.open_json('scrobble.json')
+
+                if model_id in scrobble_dict:
+                    scrobble_dict[model_id]['plays'] += 1
+                    scrobble_dict[model_id]['last_play'] = int(time.time())
+                    scrobble_dict[model_id]['album'] = model.get_property('albumId')
+                    scrobble_dict[model_id]['artist'] = model.get_property('artistId')
+                else:
+                    scrobble_dict[model_id] = {
+                        'plays': 1,
+                        'last_play': int(time.time()),
+                        'album': model.get_property('albumId'),
+                        'artist': model.get_property('artistId')
+                    }
+                self.save_json('scrobble.json', scrobble_dict)
         super().scrobble(model_id, submission=submission)
 
     def setRating(self, model_id:str, rating:int=0) -> bool:
-        conn, cursor = sql_instance.get_connection(self)
-        if rating == 0:
-            cursor.execute("DELETE FROM ratings WHERE id = ?", (model_id,))
-        else:
-            query = """
-            INSERT INTO ratings (id, rating)
-            VALUES (?, ?)
-            ON CONFLICT (id) DO UPDATE SET
-                rating = excluded.rating
-            """
-            cursor.execute(query, (model_id, rating))
-        conn.commit()
-        conn.close()
+        ratings = self.open_json('ratings.json')
+        ratings[model_id] = rating
+        self.loaded_models.get(model_id).set_property('userRating', rating)
+        self.save_json('ratings.json', ratings)
         return True
 
     def getSongDetails(self, model_id:str) -> models.SongDetails:

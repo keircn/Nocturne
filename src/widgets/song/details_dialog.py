@@ -76,4 +76,3 @@ class SongDetailsDialog(Adw.Dialog):
                             row.set_action_target_value(GLib.Variant('s', model_id))
                             row.set_activatable(True)
                     self.listbox_el.append(row)
-        

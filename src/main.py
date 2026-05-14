@@ -32,6 +32,7 @@ from .constants import get_song_info_from_file, TRANSLATORS, DEFAULT_MUSIC_DIR, 
 from .integrations import get_current_integration, set_current_integration, get_available_integrations, models
 from .widgets.playing import Player
 from .widgets.pages import LoginDialog
+from . import widgets as Widgets
 
 GLib.set_prgname('com.jeffser.Nocturne')
 GLib.set_application_name("Nocturne")
@@ -47,6 +48,8 @@ class NocturneApplication(Adw.Application):
         self.popout_window = None
         self.player = None
         self.inhibit_cookie = None
+        self.dbus_registration_id = None
+        self.pending_miniplayer_present = False
         self.idle_inhibit_cookie = None
         self.css_provider = Gtk.CssProvider()
         Gtk.StyleContext.add_provider_for_display(
@@ -61,6 +64,53 @@ class NocturneApplication(Adw.Application):
         self.create_action('quit', lambda *_: self.quit(), ['<control>q'])
         self.create_action('about', self.on_about_action)
         self.create_action('preferences', self.on_preferences_action, ['<control>comma'])
+        self.create_action('toggle-miniplayer', self.on_toggle_miniplayer_action)
+
+    def do_startup(self):
+        Adw.Application.do_startup(self)
+        self.register_dbus_interface()
+
+    def do_shutdown(self):
+        if self.dbus_registration_id:
+            self.get_dbus_connection().unregister_object(self.dbus_registration_id)
+            self.dbus_registration_id = None
+        Adw.Application.do_shutdown(self)
+
+    def register_dbus_interface(self):
+        introspection = Gio.DBusNodeInfo.new_for_xml("""
+            <node>
+              <interface name="com.jeffser.Nocturne">
+                <method name="ToggleMiniplayer"/>
+              </interface>
+            </node>
+        """)
+        interface = introspection.interfaces[0]
+        self.dbus_registration_id = self.get_dbus_connection().register_object(
+            '/com/jeffser/Nocturne',
+            interface,
+            self.on_dbus_method_call,
+            None,
+            None
+        )
+
+    def on_dbus_method_call(
+        self,
+        connection,
+        sender,
+        object_path,
+        interface_name,
+        method_name,
+        parameters,
+        invocation
+    ):
+        if interface_name == 'com.jeffser.Nocturne' and method_name == 'ToggleMiniplayer':
+            self.toggle_miniplayer()
+            invocation.return_value(GLib.Variant('()', ()))
+        else:
+            invocation.return_dbus_error(
+                'com.jeffser.Nocturne.Error.NotSupported',
+                f"Unsupported method {interface_name}.{method_name}"
+            )
 
     def inhibit_suspend(self):
         if self.inhibit_cookie is None:
@@ -117,6 +167,9 @@ class NocturneApplication(Adw.Application):
             GLib.idle_add(self.main_window.setup)
             if not self.player:
                 self.player = Player(self)
+            if self.pending_miniplayer_present:
+                self.pending_miniplayer_present = False
+                GLib.idle_add(self.show_miniplayer)
             settings = Gio.Settings(schema_id="com.jeffser.Nocturne")
             default_page = settings.get_value('default-page-tag').unpack() or 'home'
             self.main_window.activate_action("app.replace_root_page", GLib.Variant('s', default_page))
@@ -141,6 +194,34 @@ class NocturneApplication(Adw.Application):
             self.load_default_integration()
         self.main_window.present()
 
+    def on_toggle_miniplayer_action(self, *args):
+        self.toggle_miniplayer()
+
+    def show_miniplayer(self, fullscreened=False):
+        if not self.popout_window:
+            integration = get_current_integration()
+            if not integration or not integration.loaded_models.get('currentSong'):
+                self.pending_miniplayer_present = True
+                self.do_activate()
+                return
+            self.popout_window = Widgets.PopoutWindow(
+                application=self,
+                fullscreened=fullscreened
+            )
+            self.popout_window.set_name('miniplayer')
+            self.popout_window.connect('destroy', self.on_popout_window_destroyed)
+
+        self.popout_window.present()
+
+    def toggle_miniplayer(self):
+        if self.popout_window and self.popout_window.get_visible():
+            self.popout_window.hide()
+            return
+        self.show_miniplayer()
+
+    def on_popout_window_destroyed(self, popout_window):
+        if self.popout_window == popout_window:
+            self.popout_window = None
 
     def do_open(self, files, n_files=None, hint=None):
         self.external_songs = []

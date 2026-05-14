@@ -89,7 +89,6 @@
     <file alias="pages/radios.ui">ui/pages/radios.ui</file>
     <file alias="pages/welcome.ui">ui/pages/welcome.ui</file>
     <file alias="pages/setup.ui">ui/pages/setup.ui</file>
-    <file alias="pages/playback.ui">ui/pages/playback.ui</file>
 
     <file alias="album/button.ui">ui/album/button.ui</file>
     <file alias="album/page.ui">ui/album/page.ui</file>
@@ -109,7 +108,6 @@
     <file alias="song/queue.ui">ui/song/queue.ui</file>
     <file alias="song/small_row.ui">ui/song/small_row.ui</file>
     <file alias="song/details_dialog.ui">ui/song/details_dialog.ui</file>
-    <file alias="song/button.ui">ui/song/button.ui</file>
 
     <file alias="containers/carousel.ui">ui/containers/carousel.ui</file>
     <file alias="containers/wrapbox.ui">ui/containers/wrapbox.ui</file>

@@ -32,6 +32,21 @@ template $NocturnePreferencesDialog: Adw.PreferencesDialog {
     Adw.PreferencesGroup session_group_el {
       title: _("Session");
 
+      Adw.SwitchRow discord_rpc_el {
+        title: _("Discord Rich Presence");
+        subtitle: _("Share the currently playing song on Discord");
+      }
+
+      Adw.EntryRow discord_rpc_client_id_el {
+        title: _("Discord Application ID");
+        visible: bind discord_rpc_el.active;
+      }
+
+      Adw.EntryRow discord_rpc_public_url_el {
+        title: _("Public Server URL for Cover Art (Must Be Accessible by Discord)");
+        visible: bind discord_rpc_el.active;
+      }
+
       Adw.ActionRow {
         title: _("ListenBrainz Link");
         subtitle: _("Keep track of your playback history");
@@ -341,4 +356,3 @@ template $NocturnePreferencesDialog: Adw.PreferencesDialog {
     }
   }
 }
-

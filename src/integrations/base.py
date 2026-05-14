@@ -1,7 +1,7 @@
 # base.py
 
 from gi.repository import Gtk, GLib, GObject, Gdk
-from . import models, secret, sql_instance
+from . import models, secret
 from ..constants import get_nocturne_version, DEFAULT_MUSIC_DIR, INTEGRATIONS_DIR
 import requests, io, urllib3, time, os, json
 from PIL import Image
@@ -31,17 +31,14 @@ class Base(GObject.Object):
     # Show spinner in sidebar with message as tooltip text if set
     loadingMessage = GObject.Property(type=str)
 
-    # See example in get_sql_schema
-    sqlSchema = {}
-
     def open_json(self, filename:str, fallback={}) -> dict:
-        # please use sql when possible
+        # loads a JSON file from the current integration
         try:
             with open(os.path.join(self.getIntegrationDir(), filename), 'r') as f:
                 return json.load(f)
         except Exception:
             pass
-        return None
+        return fallback
 
     def save_json(self, filename:str, data:dict):
         # save JSON to instance specific file
@@ -50,22 +47,6 @@ class Base(GObject.Object):
                 json.dump(data, f)
         except Exception:
             pass
-
-    def get_sql_schema(self) -> dict:
-        return {
-            'playlist_resume': {
-                'id': 'TEXT PRIMARY KEY',
-                'song_id': 'TEXT NOT NULL',
-                'timestamp': 'FLOAT DEFAULT 0'
-            },
-            'playback_scrobble': {
-                'month': 'TEXT NOT NULL',
-                'song_id': 'TEXT NOT NULL',
-                'amount': 'INTEGER DEFAULT 1',
-                'UNIQUE': '(month, song_id)'
-            },
-            **self.sqlSchema
-        }
 
     def check_if_ready(self, row) -> bool:
         # gets called to see if it is ready to show login page
@@ -93,8 +74,7 @@ class Base(GObject.Object):
 
     def on_login(self):
         # gets called in different thread when the login is successful
-        # optional
-        pass
+        print('WARNING', 'on_login', 'not implemented')
 
     def get_stream_url(self, song_id:str) -> str:
         # should return a valid url for a gst stream
@@ -115,11 +95,13 @@ class Base(GObject.Object):
         print('WARNING', 'getCoverArt', 'not implemented')
         return None
 
+    def getCoverArtUrl(self, model_id:str='', big:bool=False) -> str:
+        return ""
+
     def ping(self) -> bool:
         # return True if logged in and connection is successful
-        # when implementing also do super().ping() to prepare SQL
-        sql_instance.ensure_schema(self)
-        return True
+        print('WARNING', 'ping', 'not implemented')
+        return False
 
     def getAlbumList(self, list_type:str="recent", size:int=10, offset:int=0) -> list:
         # add non existing elements to self.loaded_models, returns lists of IDs, nothing more
@@ -258,17 +240,15 @@ class Base(GObject.Object):
         # if you need to inherit this, also call super().scrobble(id) so that listenbrainz can also get the scrobble
 
         # Playback (monthly scrobble)
+        playback_scrobble = self.open_json('playback.json')
         date_formated = datetime.now().strftime("%m-%Y")
-        conn, cursor = sql_instance.get_connection(self)
-        query = """
-        INSERT INTO playback_scrobble (month, song_id)
-        VALUES (?, ?)
-        ON CONFLICT(month, song_id) DO UPDATE SET
-            amount = amount + 1;
-        """
-        cursor.execute(query, (date_formated, model_id))
-        conn.commit()
-        conn.close()
+        if date_formated not in playback_scrobble:
+            playback_scrobble[date_formated] = {}
+        if model_id in playback_scrobble.get(date_formated):
+            playback_scrobble[date_formated][model_id] += 1
+        else:
+            playback_scrobble[date_formated][model_id] = 1
+        self.save_json('playback.json', playback_scrobble)
 
         # ListenBrainz
         if model := self.loaded_models.get(model_id):
@@ -304,71 +284,29 @@ class Base(GObject.Object):
 
         # Playlist Resume
         queue_origin_id = self.loaded_models.get('currentSong').get_property('queueOrigin')
-        current_timestamp = self.loaded_models.get('currentSong').get_property('positionSeconds')
         if model := self.loaded_models.get(queue_origin_id):
             if isinstance(model, models.Playlist):
-                conn, cursor = sql_instance.get_connection(self)
-                query = """
-                INSERT INTO playlist_resume (id, song_id, timestamp)
-                VALUES (?, ?, ?)
-                ON CONFLICT (id) DO UPDATE SET
-                    song_id = excluded.song_id,
-                    timestamp = excluded.timestamp;
-                """
-                cursor.execute(query, (queue_origin_id, model_id, current_timestamp))
-                conn.commit()
-                conn.close()
+                playlist_resume_dict = self.open_json('playlist_resume.json')
+                playlist_resume_dict[model.get_property('id')] = model_id
+                self.save_json('playlist_resume.json', playlist_resume_dict)
 
-    def getPlaylistResume(self, model_id:str) -> tuple:
+    def getPlaylistLastPlayedSong(self, model_id:str) -> str:
         # Works as is, no need to modify
-        # Returns song_id, timestamp (seconds float)
+        # If no song is found it returns the first one from the playlist
         if playlist := self.loaded_models.get(model_id):
-            conn, cursor = sql_instance.get_connection(self)
-            cursor.execute(
-                "SELECT song_id, timestamp FROM playlist_resume WHERE id=?",
-                (playlist.get_property('id'),)
-            )
-            result = cursor.fetchone()
-            conn.close()
-            if result:
-                return result[0], result[1]
-        return "", 0
-
-    def savePlaylistResume(self, queue_origin_id:str, song_id:str, current_timestamp:float):
-        # Works as is, no need to modify
-        if model := self.loaded_models.get(queue_origin_id):
-            if isinstance(model, models.Playlist):
-                conn, cursor = sql_instance.get_connection(self)
-                query = """
-                INSERT INTO playlist_resume (id, song_id, timestamp)
-                VALUES (?, ?, ?)
-                ON CONFLICT (id) DO UPDATE SET
-                    song_id = excluded.song_id,
-                    timestamp = excluded.timestamp;
-                """
-                cursor.execute(query, (queue_origin_id, song_id, current_timestamp))
-                conn.commit()
-                conn.close()
+            playlist_resume_dict = self.open_json('playlist_resume.json')
+            songs = playlist.get_property('entry')
+            fallback_song = ""
+            if len(songs) > 0:
+                fallback_song = songs[0].get('id')
+            return playlist_resume_dict.get(playlist.get_property('id'), fallback_song)
+        return ""
 
     def getSongDetails(self, model_id:str) -> models.SongDetails:
         # Fill and return songDetails
         # Do NOT add it to loaded_models
         return models.SongDetails()
     
-    def getPlaybackScrobble(self, month:str, top:int=50) -> list:
-        # Works as is, no need to modify
-        # Month in format %m-%Y
-        # Returns list of tuples (song_id, amount)
-        conn, cursor = sql_instance.get_connection(self)
-        query = """
-        SELECT song_id, amount FROM playback_scrobble
-        WHERE month = ? ORDER BY amount DESC LIMIT ?;
-        """
-        cursor.execute(query, (month, top))
-        results = cursor.fetchall()
-        conn.close()
-        return results
-
     def getServerInformation(self) -> dict:
         # should return these keys:
         # picture : gdk.Paintable

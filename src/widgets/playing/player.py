@@ -9,6 +9,7 @@ from mpris_server import Metadata, ValidMetadata, Track, Position, Volume, Rate,
 
 from ...constants import MPRIS_COVER_PATH
 from ...integrations import get_current_integration, models
+from ...integrations.discord_rpc import DiscordRPC
 from ..lyrics import LyricsDialog
 from urllib.parse import urlparse
 import threading, os, colorsys, io, base64
@@ -309,8 +310,15 @@ class Player(EventAdapter):
         self.last_song_id = None
         self.pause_next_change = False
         self.last_gst_state_type = -1
+        self.discord_rpc = DiscordRPC(self)
+        self.settings.connect('changed::discord-rpc-enabled', lambda *_: self.discord_rpc.update())
+        self.settings.connect('changed::discord-rpc-client-id', lambda *_: self.discord_rpc.update())
+        self.settings.connect('changed::discord-rpc-public-url', lambda *_: self.discord_rpc.update())
         integration = get_current_integration()
         integration.connect_to_model('currentSong', 'songId', self.song_changed)
+        integration.connect_to_model('currentSong', 'songId', lambda *_: self.discord_rpc.update())
+        integration.connect_to_model('currentSong', 'displaySongTitle', lambda *_: self.discord_rpc.update())
+        integration.connect_to_model('currentSong', 'displaySongArtist', lambda *_: self.discord_rpc.update())
 
     def on_source_setup(self, playbin, source):
         try:
@@ -334,6 +342,7 @@ class Player(EventAdapter):
                 else:
                     root.remove_css_class('playing')
             self.emit_changes(self.mpris.player, changes=['Metadata', 'PlaybackStatus'])
+            self.discord_rpc.update()
 
     def handle_song_change_request(self, action:str):
         # action can be next, previous or end (song ended)

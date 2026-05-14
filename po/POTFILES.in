@@ -6,6 +6,7 @@ src/actions.py
 src/constants.py
 src/__init__.py
 src/integrations/base.py
+src/integrations/discord_rpc.py
 src/integrations/__init__.py
 src/integrations/jellyfin.py
 src/integrations/local.py

@@ -6,7 +6,7 @@ from ..constants import get_navidrome_path, check_if_navidrome_ready, get_navidr
 from .base import Base
 import requests, random, threading, io, subprocess, shutil, os
 from PIL import Image
-from urllib.parse import urlparse
+from urllib.parse import urlencode, urlparse
 
 class Navidrome(Base):
     __gtype_name__ = 'NocturneIntegrationNavidrome'
@@ -67,6 +67,11 @@ class Navidrome(Base):
 
     # ----------- #
 
+    def on_login(self):
+        self.getServerInformation()
+        self.getStarredSongs()
+        pass
+
     def get_stream_url(self, song_id:str) -> str:
         # streams are handled by gst not requests
         if song_id not in self.loaded_models:
@@ -118,10 +123,22 @@ class Navidrome(Base):
                     pass
         return None
 
+    def getCoverArtUrl(self, model_id:str='', big:bool=False) -> str:
+        if model := self.loaded_models.get(model_id):
+            if isinstance(model, models.Song) and (model.get_property('isRadio') or model.get_property('isExternalFile')):
+                return ""
+            params = {
+                **self.get_base_params(),
+                'id': model.get_property('coverArt') or model.get_property('id'),
+                'size': 720 if big else 240
+            }
+            return '{}?{}'.format(self.get_url('getCoverArt'), urlencode(params))
+        return ""
+
     def ping(self) -> bool:
         try:
             response = self.make_request('ping')
-            return response.get('status') == 'ok' and super().ping()
+            return response.get('status') == 'ok'
         except Exception:
             return False
 
@@ -198,10 +215,7 @@ class Navidrome(Base):
             detail_response = self.make_request('getArtistInfo2', {'id': model_id})
             detail_artist = detail_response.get('artistInfo2', {})
             artist_dict = {**base_artist, **detail_artist}
-            if artist_dict.get('id'):
-                self.loaded_models.get(model_id).update_data(**artist_dict)
-            elif model_id in self.loaded_models:
-                del self.loaded_models[model_id]
+            self.loaded_models.get(model_id).update_data(**artist_dict)
 
         if model_id not in self.loaded_models:
             self.loaded_models[model_id] = models.Artist(id=model_id)
@@ -219,10 +233,7 @@ class Navidrome(Base):
         def update():
             response = self.make_request('getAlbum', {'id': model_id})
             album_dict = response.get('album', {})
-            if album_dict.get('id'):
-                self.loaded_models.get(model_id).update_data(**album_dict)
-            elif model_id in self.loaded_models:
-                del self.loaded_models[model_id]
+            self.loaded_models.get(model_id).update_data(**album_dict)
 
         if model_id not in self.loaded_models:
             self.loaded_models[model_id] = models.Album(id=model_id)
@@ -240,10 +251,7 @@ class Navidrome(Base):
         def update():
             response = self.make_request('getPlaylist', {'id': model_id})
             playlist_dict = response.get('playlist', {})
-            if playlist_dict.get('id'):
-                self.loaded_models.get(model_id).update_data(**playlist_dict)
-            elif model_id in self.loaded_models:
-                del self.loaded_models[model_id]
+            self.loaded_models.get(model_id).update_data(**playlist_dict)
 
         if model_id not in self.loaded_models:
             self.loaded_models[model_id] = models.Playlist(id=model_id)
@@ -261,18 +269,14 @@ class Navidrome(Base):
         def update():
             response = self.make_request('getSong', {'id': model_id})
             song_dict = response.get('song', {})
-            if song_dict.get('id'):
-                if 'artists' not in song_dict and song_dict.get('artistId'):
-                    song_dict['artists'] = [{
-                        'id': song_dict.get('artistId'),
-                        'name': song_dict.get('artist')
-                    }]
-                gains = song_dict.get('replayGain') or {}
-                self.loaded_models.get(model_id).update_data(**song_dict, albumGain=gains.get('albumGain', 0.0), trackGain=gains.get('trackGain', 0.0))
-                threading.Thread(target=self.getCoverArt, args=(model_id,), daemon=True).start()
-            elif model_id in self.loaded_models:
-                self.loaded_models.get(model_id).set_property('deleted', True)
-                del self.loaded_models[model_id]
+            if 'artists' not in song_dict and song_dict.get('artistId'):
+                song_dict['artists'] = [{
+                    'id': song_dict.get('artistId'),
+                    'name': song_dict.get('artist')
+                }]
+            gains = song_dict.get('replayGain') or {}
+            self.loaded_models.get(model_id).update_data(**song_dict, albumGain=gains.get('albumGain', 0.0), trackGain=gains.get('trackGain', 0.0))
+            threading.Thread(target=self.getCoverArt, args=(model_id,), daemon=True).start()
 
         if model_id not in self.loaded_models:
             self.loaded_models[model_id] = models.Song(id=model_id)
@@ -613,4 +617,3 @@ class NavidromeIntegrated(Navidrome):
             self.process.terminate()
             self.process = None
         self.set_property('serverRunning', False)
-

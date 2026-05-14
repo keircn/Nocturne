@@ -21,7 +21,6 @@ class SongRow(Adw.ActionRow):
     star_el = Gtk.Template.Child()
     check_el = Gtk.Template.Child()
     menu_button_el = Gtk.Template.Child()
-    subtitle_wrapbox = Gtk.Template.Child()
 
     def __init__(self, id:str, draggable:bool=False, removable:bool=False):
         self.id = id
@@ -190,9 +189,7 @@ class SongRow(Adw.ActionRow):
         if songId == self.id:
             self.icon_el.set_from_icon_name('sound-symbolic')
             self.icon_el.set_visible(True)
-            self.add_css_class('accent')
         else:
-            self.remove_css_class('accent')
             if self.draggable:
                 self.icon_el.set_from_icon_name('list-drag-handle-symbolic')
                 self.icon_el.set_visible(True)

@@ -24,6 +24,9 @@ class NocturnePreferences(Adw.PreferencesDialog):
     instance_avatar_el = Gtk.Template.Child()
     instance_icon_el = Gtk.Template.Child()
     instance_el = Gtk.Template.Child()
+    discord_rpc_el = Gtk.Template.Child()
+    discord_rpc_client_id_el = Gtk.Template.Child()
+    discord_rpc_public_url_el = Gtk.Template.Child()
 
     # Customization
     ## Interface
@@ -112,6 +115,25 @@ class NocturnePreferences(Adw.PreferencesDialog):
             self.bitrate_el.set_visible(False)
 
         ## Session
+        settings.bind(
+            "discord-rpc-enabled",
+            self.discord_rpc_el,
+            "active",
+            Gio.SettingsBindFlags.DEFAULT
+        )
+        settings.bind(
+            "discord-rpc-client-id",
+            self.discord_rpc_client_id_el,
+            "text",
+            Gio.SettingsBindFlags.DEFAULT
+        )
+        settings.bind(
+            "discord-rpc-public-url",
+            self.discord_rpc_public_url_el,
+            "text",
+            Gio.SettingsBindFlags.DEFAULT
+        )
+
         self.listenbrainz_stack_el.set_visible_child_name("unlink" if secret.get_plain_password(schema_type="listenbrainz") else "link")
         if integration:
             data = integration.getServerInformation()

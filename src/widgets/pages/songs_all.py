@@ -2,7 +2,7 @@
 
 from gi.repository import Gtk, Adw, GLib, GObject, Gio
 from ...integrations import get_current_integration, models
-from ..song import SongRow, SongButton
+from ..song import SongRow, SongSmallRow
 import threading
 
 @Gtk.Template(resource_path='/com/jeffser/Nocturne/pages/songs_all.ui')
@@ -65,7 +65,7 @@ class SongsAllPage(Adw.NavigationPage):
             if len(results_wrapbox) > 0:
                 GLib.idle_add(results_wrapbox[0].set_visible, True)
             else:
-                button = SongButton(song_id)
+                button = SongSmallRow(song_id)
                 GLib.idle_add(self.wrapbox_el.append, button)
 
         GLib.idle_add(self.end_stack.set_visible_child_name, 'end' if len(search_results.get('song')) < count else 'loading')

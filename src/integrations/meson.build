@@ -8,7 +8,7 @@ widgets = [
   'navidrome.py',
   'base.py',
   'jellyfin.py',
-  'sql_instance.py',
+  'discord_rpc.py',
 ]
 
 install_data(widgets, install_dir: moduledir)
